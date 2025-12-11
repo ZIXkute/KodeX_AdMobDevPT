@@ -57,8 +57,23 @@ const HuntTab = () => (
 );
 
 const ARCameraTab = () => (
-  <MainStack.Navigator screenOptions={screenOptions}>
-    <MainStack.Screen name="ARCamera" component={ARCameraScreen} options={{ title: 'AR Camera', headerShown: false }} />
+  <MainStack.Navigator 
+    screenOptions={{
+      ...screenOptions,
+      // This helps prevent view hierarchy issues with camera
+      animation: 'none',
+    }}
+  >
+    <MainStack.Screen 
+      name="ARCamera" 
+      component={ARCameraScreen} 
+      options={{ 
+        title: 'AR Camera', 
+        headerShown: false,
+        // Freeze the screen when not focused to prevent camera issues
+        freezeOnBlur: true,
+      }} 
+    />
   </MainStack.Navigator>
 );
 

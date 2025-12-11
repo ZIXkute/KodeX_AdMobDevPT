@@ -1,33 +1,78 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
   Image,
-  PermissionsAndroid,
-  Platform,
+  BackHandler,
+  InteractionManager,
 } from 'react-native';
 import { Camera, useCameraDevice, useCameraPermission } from 'react-native-vision-camera';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useIsFocused } from '@react-navigation/native';
 
 import { MainStackParamList } from '../navigation/types';
 import { PokemonDetail } from '../types/pokemon';
 import { capitalize, getSpriteUri } from '../utils/pokemon';
 import { fetchPokemonDetailBundle } from '../services/pokeApi';
+import { useAuth } from '../../AuthContext';
+import { PokemonService } from '../services/pokemonService';
 
 type Props = NativeStackScreenProps<MainStackParamList, 'ARCamera'>;
 
 export const ARCameraScreen = ({ navigation }: Props) => {
   const { hasPermission, requestPermission } = useCameraPermission();
+  const { user } = useAuth();
   const device = useCameraDevice('back');
-  const camera = useRef<Camera>(null);
-  const [isActive, setIsActive] = useState(true);
+  const isFocused = useIsFocused();
+  
+  const [cameraReady, setCameraReady] = useState(false);
   const [overlayPokemon, setOverlayPokemon] = useState<PokemonDetail | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
+  const [captureStatus, setCaptureStatus] = useState<'idle' | 'capturing' | 'success' | 'failed'>('idle');
+  const [captureMessage, setCaptureMessage] = useState<string>('');
+  const mountedRef = useRef(true);
+
+  // Only show camera when screen is focused AND ready
+  const showCamera = isFocused && cameraReady && hasPermission && device;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  // Handle camera readiness with delay
+  useEffect(() => {
+    if (isFocused && hasPermission && device) {
+      // Delay camera activation to let the view settle
+      const handle = InteractionManager.runAfterInteractions(() => {
+        if (mountedRef.current) {
+          setCameraReady(true);
+          // Load Pokemon after camera is ready
+          setTimeout(() => {
+            if (mountedRef.current && !overlayPokemon) {
+              loadRandomPokemon();
+            }
+          }, 500);
+        }
+      });
+      return () => handle.cancel();
+    } else {
+      setCameraReady(false);
+    }
+  }, [isFocused, hasPermission, device]);
+
+  // Reset state when screen loses focus
+  useEffect(() => {
+    if (!isFocused) {
+      setCameraReady(false);
+      setCaptureStatus('idle');
+      setCaptureMessage('');
+    }
+  }, [isFocused]);
 
   useEffect(() => {
     if (!hasPermission) {
@@ -35,89 +80,126 @@ export const ARCameraScreen = ({ navigation }: Props) => {
     }
   }, [hasPermission, requestPermission]);
 
+  // Handle hardware back button
   useEffect(() => {
-    return () => {
-      setIsActive(false);
-    };
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      safeGoBack();
+      return true;
+    });
+    return () => backHandler.remove();
   }, []);
 
   const loadRandomPokemon = async () => {
     try {
-      setLoading(true);
-      // Get a random Pokémon (1-151 for original 151)
       const randomId = Math.floor(Math.random() * 151) + 1;
       const bundle = await fetchPokemonDetailBundle(randomId);
-      setOverlayPokemon(bundle.detail);
+      if (mountedRef.current) {
+        setOverlayPokemon(bundle.detail);
+      }
     } catch (error) {
       console.warn('Error loading Pokémon:', error);
-    } finally {
-      setLoading(false);
     }
   };
 
-  const takePhoto = async () => {
-    if (!camera.current) {
+  const safeGoBack = useCallback(() => {
+    // Disable camera first
+    setCameraReady(false);
+    setCaptureStatus('idle');
+    
+    // Small delay then navigate
+    setTimeout(() => {
+      if (navigation.canGoBack()) {
+        navigation.goBack();
+      } else {
+        // Navigate to Hunt tab if can't go back
+        navigation.getParent()?.navigate('HuntTab');
+      }
+    }, 100);
+  }, [navigation]);
+
+  const catchPokemon = async () => {
+    if (!overlayPokemon || !user) {
+      setCaptureMessage(!overlayPokemon ? 'No Pokemon!' : 'Not logged in!');
+      setCaptureStatus('failed');
+      setTimeout(() => {
+        if (mountedRef.current) setCaptureStatus('idle');
+      }, 1500);
       return;
     }
 
-    try {
-      const photo = await camera.current.takePhoto({
-        flash: 'off',
-      });
+    // Disable camera during capture to prevent view issues
+    setCameraReady(false);
+    setCaptureStatus('capturing');
+    setCaptureMessage('Catching...');
 
-      setCapturedPhoto(`file://${photo.path}`);
-      Alert.alert(
-        'Photo Captured!',
-        overlayPokemon ? `You captured ${capitalize(overlayPokemon.name)}!` : 'Photo saved!',
-        [
-          { text: 'Retake', onPress: () => setCapturedPhoto(null) },
-          { text: 'OK', onPress: () => setCapturedPhoto(null) },
-        ],
-      );
-    } catch (error) {
-      console.warn('Error taking photo:', error);
-      Alert.alert('Error', 'Failed to capture photo');
+    const success = Math.random() < 0.8; // 80% catch rate
+
+    if (success) {
+      try {
+        await PokemonService.capturePokemon(user.uid, {
+          pokemonId: overlayPokemon.id,
+          pokemonName: overlayPokemon.name,
+          captureMethod: 'ar',
+        });
+
+        if (mountedRef.current) {
+          setCaptureStatus('success');
+          setCaptureMessage(`Caught ${capitalize(overlayPokemon.name)}!`);
+        }
+        
+        setTimeout(() => {
+          if (mountedRef.current) {
+            setOverlayPokemon(null);
+            safeGoBack();
+          }
+        }, 1500);
+      } catch (error) {
+        console.error('Capture error:', error);
+        if (mountedRef.current) {
+          setCaptureStatus('success');
+          setCaptureMessage(`Caught! (Save failed)`);
+        }
+        setTimeout(() => {
+          if (mountedRef.current) safeGoBack();
+        }, 1500);
+      }
+    } else {
+      if (mountedRef.current) {
+        setCaptureStatus('failed');
+        setCaptureMessage(`${capitalize(overlayPokemon.name)} escaped!`);
+      }
+      
+      setTimeout(() => {
+        if (mountedRef.current) {
+          setCaptureStatus('idle');
+          setCaptureMessage('');
+          setCameraReady(true); // Re-enable camera
+        }
+      }, 1500);
     }
   };
 
+  // Permission screen
   if (!hasPermission) {
     return (
-      <View style={styles.permissionContainer}>
-        <Text style={styles.permissionText}>Camera permission is required</Text>
-        <TouchableOpacity style={styles.permissionButton} onPress={requestPermission}>
-          <Text style={styles.permissionButtonText}>Grant Permission</Text>
+      <View style={styles.centerContainer}>
+        <Text style={styles.messageText}>Camera permission required</Text>
+        <TouchableOpacity style={styles.button} onPress={requestPermission}>
+          <Text style={styles.buttonText}>Grant Permission</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.button, styles.secondaryButton]} onPress={safeGoBack}>
+          <Text style={styles.buttonText}>Go Back</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
+  // No device
   if (!device) {
     return (
-      <View style={styles.loader}>
+      <View style={styles.centerContainer}>
         <ActivityIndicator size="large" color="#ef5350" />
-        <Text style={styles.loaderText}>Loading camera...</Text>
-      </View>
-    );
-  }
-
-  if (capturedPhoto) {
-    return (
-      <View style={styles.previewContainer}>
-        <Image source={{ uri: capturedPhoto }} style={styles.previewImage} resizeMode="contain" />
-        <View style={styles.previewControls}>
-          <TouchableOpacity style={styles.previewButton} onPress={() => setCapturedPhoto(null)}>
-            <Text style={styles.previewButtonText}>Retake</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.previewButton}
-            onPress={() => {
-              setCapturedPhoto(null);
-              navigation.goBack();
-            }}
-          >
-            <Text style={styles.previewButtonText}>Done</Text>
-          </TouchableOpacity>
-        </View>
+        <Text style={styles.messageText}>Loading camera...</Text>
       </View>
     );
   }
@@ -126,49 +208,66 @@ export const ARCameraScreen = ({ navigation }: Props) => {
 
   return (
     <View style={styles.container}>
-      <Camera
-        ref={camera}
-        style={styles.camera}
-        device={device}
-        isActive={isActive}
-        photo={true}
-      />
+      {/* Camera - only render when ready */}
+      {showCamera && device ? (
+        <Camera
+          style={StyleSheet.absoluteFill}
+          device={device}
+          isActive={true}
+        />
+      ) : (
+        <View style={styles.cameraPlaceholder} />
+      )}
 
-      {overlayPokemon && spriteUri && (
-        <View style={styles.overlay}>
-          <View style={styles.pokemonOverlay}>
-            <Image source={{ uri: spriteUri }} style={styles.overlayImage} resizeMode="contain" />
-            <Text style={styles.overlayText}>{capitalize(overlayPokemon.name)}</Text>
+      {/* Back button */}
+      <TouchableOpacity style={styles.backButton} onPress={safeGoBack}>
+        <Text style={styles.backButtonText}>← Back</Text>
+      </TouchableOpacity>
+
+      {/* Pokemon overlay - only when idle */}
+      {overlayPokemon && spriteUri && captureStatus === 'idle' && (
+        <View style={styles.pokemonContainer}>
+          <View style={styles.pokemonCard}>
+            <Image source={{ uri: spriteUri }} style={styles.pokemonImage} />
+            <Text style={styles.pokemonName}>{capitalize(overlayPokemon.name)}</Text>
           </View>
         </View>
       )}
 
-      <View style={styles.controls}>
-        <TouchableOpacity
-          style={styles.controlButton}
-          onPress={loadRandomPokemon}
-          disabled={loading}
-        >
-          {loading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.controlButtonText}>Spawn Pokémon</Text>
-          )}
-        </TouchableOpacity>
+      {/* Status overlay */}
+      {captureStatus !== 'idle' && (
+        <View style={styles.statusOverlay}>
+          <View style={[
+            styles.statusCard,
+            captureStatus === 'success' && styles.successCard,
+            captureStatus === 'failed' && styles.failedCard,
+          ]}>
+            {captureStatus === 'capturing' && (
+              <ActivityIndicator size="large" color="#fff" />
+            )}
+            <Text style={styles.statusText}>{captureMessage}</Text>
+          </View>
+        </View>
+      )}
 
-        <TouchableOpacity style={styles.captureButton} onPress={takePhoto}>
-          <View style={styles.captureButtonInner} />
-        </TouchableOpacity>
-
-        {overlayPokemon && (
-          <TouchableOpacity
-            style={styles.clearButton}
-            onPress={() => setOverlayPokemon(null)}
-          >
-            <Text style={styles.clearButtonText}>Clear</Text>
+      {/* Catch button */}
+      {overlayPokemon && captureStatus === 'idle' && (
+        <View style={styles.controlsContainer}>
+          <TouchableOpacity style={styles.catchButton} onPress={catchPokemon}>
+            <Text style={styles.catchButtonText}>🎯 CATCH!</Text>
           </TouchableOpacity>
-        )}
-      </View>
+        </View>
+      )}
+
+      {/* Loading Pokemon */}
+      {!overlayPokemon && captureStatus === 'idle' && (
+        <View style={styles.controlsContainer}>
+          <View style={styles.loadingCard}>
+            <ActivityIndicator size="small" color="#fff" />
+            <Text style={styles.loadingText}>Finding Pokemon...</Text>
+          </View>
+        </View>
+      )}
     </View>
   );
 };
@@ -178,139 +277,131 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#000',
   },
-  camera: {
-    flex: 1,
+  cameraPlaceholder: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#1a1a1a',
   },
-  overlay: {
+  centerContainer: {
+    flex: 1,
+    backgroundColor: '#1a1a1a',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  messageText: {
+    color: '#fff',
+    fontSize: 16,
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  button: {
+    backgroundColor: '#ef5350',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+    marginVertical: 8,
+  },
+  secondaryButton: {
+    backgroundColor: '#666',
+  },
+  buttonText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 16,
+  },
+  backButton: {
     position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
+    top: 50,
+    left: 20,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    zIndex: 100,
+  },
+  backButtonText: {
+    color: '#fff',
+    fontWeight: '600',
+  },
+  pokemonContainer: {
+    ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  pokemonOverlay: {
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  pokemonCard: {
+    backgroundColor: 'rgba(0,0,0,0.6)',
     padding: 20,
     borderRadius: 16,
     alignItems: 'center',
   },
-  overlayImage: {
-    width: 200,
-    height: 200,
+  pokemonImage: {
+    width: 150,
+    height: 150,
   },
-  overlayText: {
+  pokemonName: {
     color: '#fff',
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: '700',
+    marginTop: 8,
+  },
+  statusOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  statusCard: {
+    backgroundColor: '#333',
+    padding: 30,
+    borderRadius: 16,
+    alignItems: 'center',
+    minWidth: 200,
+  },
+  successCard: {
+    borderWidth: 3,
+    borderColor: '#4caf50',
+  },
+  failedCard: {
+    borderWidth: 3,
+    borderColor: '#f44336',
+  },
+  statusText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '600',
     marginTop: 12,
-  },
-  controls: {
-    position: 'absolute',
-    bottom: 40,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-  },
-  controlButton: {
-    backgroundColor: '#ef5350',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 8,
-  },
-  controlButtonText: {
-    color: '#fff',
-    fontWeight: '600',
-  },
-  captureButton: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
-    backgroundColor: '#fff',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 4,
-    borderColor: '#ef5350',
-  },
-  captureButtonInner: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: '#ef5350',
-  },
-  clearButton: {
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 8,
-  },
-  clearButtonText: {
-    color: '#fff',
-    fontWeight: '600',
-  },
-  permissionContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#f7f7fb',
-    padding: 16,
-    gap: 16,
-  },
-  permissionText: {
-    color: '#4a4a4f',
-    fontSize: 16,
     textAlign: 'center',
   },
-  permissionButton: {
-    backgroundColor: '#ef5350',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
-  },
-  permissionButtonText: {
-    color: '#fff',
-    fontWeight: '600',
-  },
-  loader: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#f7f7fb',
-    gap: 12,
-  },
-  loaderText: {
-    color: '#4a4a4f',
-  },
-  previewContainer: {
-    flex: 1,
-    backgroundColor: '#000',
-  },
-  previewImage: {
-    flex: 1,
-    width: '100%',
-  },
-  previewControls: {
+  controlsContainer: {
     position: 'absolute',
-    bottom: 40,
+    bottom: 50,
     left: 0,
     right: 0,
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingHorizontal: 20,
+    alignItems: 'center',
   },
-  previewButton: {
-    backgroundColor: '#ef5350',
-    paddingHorizontal: 24,
+  catchButton: {
+    backgroundColor: '#4caf50',
+    paddingHorizontal: 40,
+    paddingVertical: 18,
+    borderRadius: 30,
+    borderWidth: 3,
+    borderColor: '#2e7d32',
+  },
+  catchButtonText: {
+    color: '#fff',
+    fontSize: 22,
+    fontWeight: '700',
+  },
+  loadingCard: {
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 20,
     paddingVertical: 12,
     borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
-  previewButtonText: {
+  loadingText: {
     color: '#fff',
-    fontWeight: '600',
+    marginLeft: 10,
   },
 });
-

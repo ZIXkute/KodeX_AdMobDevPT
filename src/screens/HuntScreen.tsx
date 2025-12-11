@@ -16,6 +16,7 @@ import MapView, { Marker, PROVIDER_DEFAULT, Region } from 'react-native-maps';
 import { MainStackParamList } from '../navigation/types';
 import { capitalize } from '../utils/pokemon';
 import { useAuth } from '../../AuthContext';
+import { PokemonService } from '../services/pokemonService';
 
 type Props = NativeStackScreenProps<MainStackParamList, 'Hunt'>;
 
@@ -143,15 +144,27 @@ export const HuntScreen = ({ navigation }: Props) => {
     }
   }, []);
 
-  // Generate random location near user
+  // Generate random location near user (5-20 meters)
   const generateNearbyLocation = (userLocation: Location): Location => {
-    const radius = 0.005; // Roughly 500 meters
-    const randomLat = userLocation.latitude + (Math.random() - 0.5) * radius;
-    const randomLng = userLocation.longitude + (Math.random() - 0.5) * radius;
+    // Convert meters to degrees (approximate)
+    // 1 degree ≈ 111,000 meters at equator
+    const minDistance = 5; // 5 meters
+    const maxDistance = 20; // 20 meters
+    
+    // Random distance between 5-20 meters
+    const distance = minDistance + Math.random() * (maxDistance - minDistance);
+    const distanceInDegrees = distance / 111000;
+    
+    // Random angle
+    const angle = Math.random() * 2 * Math.PI;
+    
+    // Calculate new position
+    const deltaLat = distanceInDegrees * Math.cos(angle);
+    const deltaLng = distanceInDegrees * Math.sin(angle) / Math.cos(userLocation.latitude * Math.PI / 180);
     
     return {
-      latitude: randomLat,
-      longitude: randomLng,
+      latitude: userLocation.latitude + deltaLat,
+      longitude: userLocation.longitude + deltaLng,
     };
   };
 
@@ -195,9 +208,20 @@ export const HuntScreen = ({ navigation }: Props) => {
 
     const distance = Math.round(calculateDistance(location, pokemon.location));
     
+    // Check if Pokemon is within interaction range (10-15 meters)
+    if (distance > 15) {
+      Alert.alert(
+        `Wild ${capitalize(pokemon.name)}!`,
+        `You need to get closer! Distance: ${distance}m away\n(Get within 15m to interact)`,
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
+    // Pokemon is interactable - show AR camera option
     Alert.alert(
       `Wild ${capitalize(pokemon.name)}!`,
-      `Distance: ${distance}m away`,
+      `Distance: ${distance}m away - Ready to catch!`,
       [
         {
           text: 'View Details',
@@ -209,7 +233,16 @@ export const HuntScreen = ({ navigation }: Props) => {
           },
         },
         {
-          text: 'Try to Catch',
+          text: 'Enter AR Mode',
+          onPress: () => {
+            // Remove the Pokemon from map and enter AR mode
+            setPokemon(prev => prev.filter(p => p.id !== pokemon.id));
+            // Navigate to AR Camera tab
+            navigation.getParent()?.navigate('ARCameraTab');
+          },
+        },
+        {
+          text: 'Quick Catch',
           onPress: () => handleCatchAttempt(pokemon, distance),
         },
         { text: 'Cancel', style: 'cancel' },
@@ -217,23 +250,50 @@ export const HuntScreen = ({ navigation }: Props) => {
     );
   }, [location, navigation]);
 
-  // Handle catch attempt
-  const handleCatchAttempt = useCallback((pokemon: Pokemon, distance: number) => {
-    if (distance > 50) {
-      Alert.alert('Too far away!', 'Get closer to catch this Pokemon.');
+  // Handle catch attempt (quick catch without AR)
+  const handleCatchAttempt = useCallback(async (pokemon: Pokemon, distance: number) => {
+    if (distance > 15) {
+      Alert.alert('Too far away!', 'Get within 15m to catch this Pokemon.');
       return;
     }
 
-    // Simple catch probability
-    const catchChance = Math.max(0.3, 1 - (distance / 100));
+    if (!user) {
+      Alert.alert('Error', 'You must be logged in to catch Pokemon.');
+      return;
+    }
+
+    // Better catch probability based on distance
+    const catchChance = Math.max(0.4, 1 - (distance / 20));
     const success = Math.random() < catchChance;
 
     if (success) {
-      Alert.alert('Gotcha!', `You caught ${capitalize(pokemon.name)}!`);
-      setPokemon(prev => prev.filter(p => p.id !== pokemon.id));
+      try {
+        // Save to Firebase
+        await PokemonService.capturePokemon(user.uid, {
+          pokemonId: pokemon.pokemonId,
+          pokemonName: pokemon.name,
+          location: location || undefined,
+          captureMethod: 'quick',
+        });
+
+        Alert.alert('Gotcha!', `You caught ${capitalize(pokemon.name)}!`);
+        setPokemon(prev => prev.filter(p => p.id !== pokemon.id));
+      } catch (error) {
+        console.error('Error saving captured Pokemon:', error);
+        Alert.alert('Caught!', `You caught ${capitalize(pokemon.name)}! (Save failed - check connection)`);
+        setPokemon(prev => prev.filter(p => p.id !== pokemon.id));
+      }
     } else {
-      Alert.alert('Oh no!', `${capitalize(pokemon.name)} escaped! Try again!`);
+      Alert.alert('Oh no!', `${capitalize(pokemon.name)} escaped! Try AR mode for better chances!`);
     }
+  }, [user, location]);
+
+  // Clean up old Pokemon (remove after 5 minutes)
+  const cleanupOldPokemon = useCallback(() => {
+    const now = Date.now();
+    const maxAge = 5 * 60 * 1000; // 5 minutes
+    
+    setPokemon(prev => prev.filter(p => (now - p.spawnTime) < maxAge));
   }, []);
 
   // Start hunting
@@ -248,13 +308,23 @@ export const HuntScreen = ({ navigation }: Props) => {
     // Spawn initial Pokemon
     spawnPokemon();
     
-    // Set up periodic spawning
+    // Set up periodic spawning and cleanup
     spawnInterval.current = setInterval(() => {
-      spawnPokemon();
-    }, 15000); // Spawn every 15 seconds
+      // Clean up old Pokemon first
+      cleanupOldPokemon();
+      
+      // Only spawn if we have less than 5 Pokemon on map
+      setPokemon(currentPokemon => {
+        if (currentPokemon.length < 5) {
+          // Trigger spawn in next tick
+          setTimeout(spawnPokemon, 100);
+        }
+        return currentPokemon;
+      });
+    }, 10000); // Check every 10 seconds
 
     console.log('Started hunting mode');
-  }, [location, spawnPokemon]);
+  }, [location, spawnPokemon, cleanupOldPokemon]);
 
   // Stop hunting
   const stopHunting = useCallback(() => {
@@ -341,23 +411,43 @@ export const HuntScreen = ({ navigation }: Props) => {
         />
         
         {/* Pokemon markers */}
-        {pokemon.map((poke) => (
-          <Marker
-            key={poke.id}
-            coordinate={poke.location}
-            onPress={() => handlePokemonTap(poke)}
-          >
-            <View style={styles.pokemonMarker}>
-              <Image
-                source={{ uri: poke.sprite }}
-                style={styles.pokemonImage}
-              />
-              <Text style={styles.pokemonName}>
-                {capitalize(poke.name)}
-              </Text>
-            </View>
-          </Marker>
-        ))}
+        {pokemon.map((poke) => {
+          const distance = location ? Math.round(calculateDistance(location, poke.location)) : 999;
+          const isInteractable = distance <= 15;
+          
+          return (
+            <Marker
+              key={poke.id}
+              coordinate={poke.location}
+              onPress={() => handlePokemonTap(poke)}
+            >
+              <View style={[
+                styles.pokemonMarker,
+                isInteractable ? styles.pokemonMarkerInteractable : styles.pokemonMarkerFar
+              ]}>
+                <Image
+                  source={{ uri: poke.sprite }}
+                  style={styles.pokemonImage}
+                  onError={() => console.log('Failed to load Pokemon sprite')}
+                />
+                <Text style={[
+                  styles.pokemonName,
+                  isInteractable ? styles.pokemonNameInteractable : styles.pokemonNameFar
+                ]}>
+                  {capitalize(poke.name)}
+                </Text>
+                <Text style={styles.distanceText}>
+                  {distance}m
+                </Text>
+                {isInteractable && (
+                  <Text style={styles.interactableText}>
+                    📱 Tap to catch!
+                  </Text>
+                )}
+              </View>
+            </Marker>
+          );
+        })}
       </MapView>
 
       {/* Status info */}
@@ -456,6 +546,16 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     shadowOffset: { width: 0, height: 2 },
     elevation: 4,
+    minWidth: 80,
+  },
+  pokemonMarkerInteractable: {
+    borderColor: '#4caf50',
+    backgroundColor: '#e8f5e8',
+    borderWidth: 3,
+  },
+  pokemonMarkerFar: {
+    borderColor: '#ff9800',
+    backgroundColor: '#fff3e0',
   },
   pokemonImage: {
     width: 40,
@@ -466,6 +566,26 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#333',
     marginTop: 2,
+    textAlign: 'center',
+  },
+  pokemonNameInteractable: {
+    color: '#2e7d32',
+    fontWeight: '700',
+  },
+  pokemonNameFar: {
+    color: '#f57c00',
+  },
+  distanceText: {
+    fontSize: 8,
+    color: '#666',
+    marginTop: 1,
+  },
+  interactableText: {
+    fontSize: 8,
+    color: '#4caf50',
+    fontWeight: '600',
+    marginTop: 2,
+    textAlign: 'center',
   },
   statusContainer: {
     position: 'absolute',
