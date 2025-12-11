@@ -15,7 +15,6 @@
 // Default/fallback config (safe to commit)
 export const APP_CONFIG = {
   GOOGLE_WEB_CLIENT_ID: process.env.GOOGLE_WEB_CLIENT_ID || '',
-  MAPBOX_ACCESS_TOKEN: process.env.MAPBOX_ACCESS_TOKEN || '',
 };
 
 // Try to load local config if it exists (gitignored)

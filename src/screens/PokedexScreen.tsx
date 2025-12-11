@@ -14,7 +14,8 @@ import { PokemonCard } from '../components/PokemonCard';
 import { SearchAndFilter } from '../components/SearchAndFilter';
 import { usePokemonList } from '../hooks/usePokemonList';
 import { MainStackParamList } from '../navigation/types';
-import { startVoiceSearch, stopVoiceSearch, destroyVoiceSearch } from '../services/voiceSearch';
+// Voice search temporarily disabled for build compatibility
+// import { startVoiceSearch, stopVoiceSearch, destroyVoiceSearch } from '../services/voiceSearch';
 
 type Props = NativeStackScreenProps<MainStackParamList, 'Pokedex'>;
 
@@ -37,35 +38,10 @@ export const PokedexScreen = ({ navigation }: Props) => {
 
   const [isVoiceSearching, setIsVoiceSearching] = useState(false);
 
-  useEffect(() => {
-    return () => {
-      destroyVoiceSearch();
-    };
-  }, []);
-
+  // Voice search temporarily disabled for build compatibility
   const handleVoiceSearch = useCallback(async () => {
-    try {
-      setIsVoiceSearching(true);
-
-      await startVoiceSearch(
-        (result) => {
-          if (result.isFinal) {
-            setSearchText(result.text);
-            setIsVoiceSearching(false);
-            stopVoiceSearch();
-          }
-        },
-        (error) => {
-          setIsVoiceSearching(false);
-          Alert.alert('Voice Search Error', error.message);
-          stopVoiceSearch();
-        },
-      );
-    } catch (error) {
-      setIsVoiceSearching(false);
-      Alert.alert('Error', 'Failed to start voice search');
-    }
-  }, [setSearchText]);
+    Alert.alert('Voice Search', 'Voice search is temporarily disabled. Will be re-enabled in next update.');
+  }, []);
 
   const handleOpenDetail = useCallback(
     (pokemonId: number, name: string) => {
