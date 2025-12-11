@@ -34,8 +34,16 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>This app needs camera access to capture Pokemon in AR mode</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>This app needs microphone access for voice search</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string></string>
+	<string>This app needs location access to find nearby Pokemon</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>This app needs photo library access to save captured Pokemon</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>This app needs permission to save captured Pokemon photos</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIRequiredDeviceCapabilities</key>
@@ -57,10 +65,11 @@
 			<string>Editor</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<!-- TODO: Replace with REVERSED_CLIENT_ID from GoogleService-Info.plist -->
-				<!-- After configuring OAuth in Firebase Console, download the updated GoogleService-Info.plist -->
-				<!-- and copy the REVERSED_CLIENT_ID value here -->
-				<string>REPLACE_WITH_REVERSED_CLIENT_ID</string>
+				<!-- IMPORTANT: Get the REVERSED_CLIENT_ID from your iOS OAuth client in Firebase Console -->
+				<!-- Go to: Firebase Console > Project Settings > General > Your iOS app > Click Config -->
+				<!-- Download the updated GoogleService-Info.plist and look for REVERSED_CLIENT_ID -->
+				<!-- It should look like: com.googleusercontent.apps.XXXXXXXXX-YYYYYYYY -->
+				<string>com.googleusercontent.apps.282171919212-REPLACE_WITH_IOS_CLIENT_ID</string>
 			</array>
 		</dict>
 	</array>
