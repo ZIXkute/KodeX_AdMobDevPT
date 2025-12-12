@@ -15,6 +15,7 @@ import { PokemonDetailScreen } from './src/screens/PokemonDetailScreen';
 import { HuntScreen } from './src/screens/HuntScreen';
 import { ARCameraScreen } from './src/screens/ARCameraScreen';
 import { ProfileScreen } from './src/screens/ProfileScreen';
+import { CommunityScreen } from './src/screens/CommunityScreen';
 import { capitalize } from './src/utils/pokemon';
 import LoadingScreen from './LoadingScreen';
 import { AuthProvider, useAuth } from './AuthContext';
@@ -57,22 +58,11 @@ const HuntTab = () => (
 );
 
 const ARCameraTab = () => (
-  <MainStack.Navigator 
-    screenOptions={{
-      ...screenOptions,
-      // This helps prevent view hierarchy issues with camera
-      animation: 'none',
-    }}
-  >
+  <MainStack.Navigator screenOptions={screenOptions}>
     <MainStack.Screen 
       name="ARCamera" 
       component={ARCameraScreen} 
-      options={{ 
-        title: 'AR Camera', 
-        headerShown: false,
-        // Freeze the screen when not focused to prevent camera issues
-        freezeOnBlur: true,
-      }} 
+      options={{ title: 'AR Camera', headerShown: false }} 
     />
   </MainStack.Navigator>
 );
@@ -81,11 +71,9 @@ function App() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Show loading screen for 0.75 seconds
     const timer = setTimeout(() => {
       setIsLoading(false);
     }, 750);
-
     return () => clearTimeout(timer);
   }, []);
 
@@ -111,11 +99,9 @@ function AppContent() {
   const [showLogin, setShowLogin] = useState(true);
 
   useEffect(() => {
-    // Check if user has seen auth screens before
     const checkAuthHistory = async () => {
       const seen = await AsyncStorage.getItem('hasSeenAuth');
       setHasSeenAuth(seen === 'true');
-      // For new users, show signup screen
       if (seen !== 'true') {
         setShowLogin(false);
       }
@@ -124,7 +110,6 @@ function AppContent() {
   }, []);
 
   useEffect(() => {
-    // Mark that user has seen auth screens
     const markAuthSeen = async () => {
       if (!user && hasSeenAuth !== null) {
         await AsyncStorage.setItem('hasSeenAuth', 'true');
@@ -141,7 +126,6 @@ function AppContent() {
     );
   }
 
-  // Show auth screens if user is not logged in
   if (!user) {
     return showLogin ? (
       <LoginScreen onNavigateToSignup={() => setShowLogin(false)} />
@@ -150,7 +134,6 @@ function AppContent() {
     );
   }
 
-  // User is logged in - show main app with navigation
   return (
     <NavigationContainer>
       <TabNavigator />
@@ -201,6 +184,14 @@ const TabNavigator = () => {
         options={{
           title: 'AR',
           tabBarIcon: () => <TabIcon emoji="📷" />,
+        }}
+      />
+      <Tab.Screen
+        name="CommunityTab"
+        component={CommunityScreen}
+        options={{
+          title: 'Community',
+          tabBarIcon: () => <TabIcon emoji="👥" />,
         }}
       />
       <Tab.Screen

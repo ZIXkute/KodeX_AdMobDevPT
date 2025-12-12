@@ -12,6 +12,7 @@ export type TabParamList = {
   PokedexTab: undefined;
   HuntTab: undefined;
   ARCameraTab: undefined;
+  CommunityTab: undefined;
   ProfileTab: undefined;
 };
 

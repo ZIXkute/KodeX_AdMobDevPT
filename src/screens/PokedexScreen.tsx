@@ -1,4 +1,4 @@
-import React, { useCallback, useState, useEffect } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -14,8 +14,8 @@ import { PokemonCard } from '../components/PokemonCard';
 import { SearchAndFilter } from '../components/SearchAndFilter';
 import { usePokemonList } from '../hooks/usePokemonList';
 import { MainStackParamList } from '../navigation/types';
-// Voice search temporarily disabled for build compatibility
-// import { startVoiceSearch, stopVoiceSearch, destroyVoiceSearch } from '../services/voiceSearch';
+// Voice search service - may need package fix for build
+// import { voiceSearchService } from '../services/voiceSearchService';
 
 type Props = NativeStackScreenProps<MainStackParamList, 'Pokedex'>;
 
@@ -38,9 +38,14 @@ export const PokedexScreen = ({ navigation }: Props) => {
 
   const [isVoiceSearching, setIsVoiceSearching] = useState(false);
 
-  // Voice search temporarily disabled for build compatibility
+  // Voice search handler - temporarily disabled due to package compatibility issues
+  // To enable: fix @react-native-voice/voice package build.gradle for Gradle 9+
   const handleVoiceSearch = useCallback(async () => {
-    Alert.alert('Voice Search', 'Voice search is temporarily disabled. Will be re-enabled in next update.');
+    Alert.alert(
+      'Voice Search', 
+      'Voice search requires a package update. Please type your search instead.',
+      [{ text: 'OK' }]
+    );
   }, []);
 
   const handleOpenDetail = useCallback(
